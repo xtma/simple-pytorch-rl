@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 parser = argparse.ArgumentParser(description='Solve the Pendulum-v0 with PPO (discrete)')
 parser.add_argument(
@@ -68,14 +69,18 @@ class Agent():
     clip_param = 0.2
     max_grad_norm = 0.5
     ppo_epoch = 10
+    buffer_capacity, batch_size = 1000, 32
 
     def __init__(self):
         self.training_step = 0
         self.anet = ActorNet().float()
         self.cnet = CriticNet().float()
+
         self.buffer = []
-        self.optimizer_a = optim.Adam(self.anet.parameters(), lr=3e-4)
-        self.optimizer_c = optim.Adam(self.cnet.parameters(), lr=1e-3)
+        self.counter = 0
+
+        self.optimizer_a = optim.Adam(self.anet.parameters(), lr=1e-3)
+        self.optimizer_c = optim.Adam(self.cnet.parameters(), lr=3e-3)
 
     def select_action(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0)
@@ -83,6 +88,11 @@ class Agent():
         m = Categorical(probs)
         action = m.sample()
         return self.action_list[action.item()], action.item(), probs[:, action].item()
+
+    def store(self, transition):
+        self.buffer.append(transition)
+        self.counter += 1
+        return self.counter % self.buffer_capacity == 0
 
     def save_param(self):
         torch.save(self.anet.state_dict(), 'param/ppo_d_anet_params.pkl')
@@ -93,30 +103,36 @@ class Agent():
 
         s = torch.tensor([t.s for t in self.buffer], dtype=torch.float)
         a = torch.tensor([t.a for t in self.buffer], dtype=torch.long).view(-1, 1)
-        old_action_probs = torch.tensor([t.a_p for t in self.buffer], dtype=torch.float).view(-1, 1)
         r = torch.tensor([t.r for t in self.buffer], dtype=torch.float).view(-1, 1)
         s_ = torch.tensor([t.s_ for t in self.buffer], dtype=torch.float)
+        old_action_probs = torch.tensor([t.a_p for t in self.buffer], dtype=torch.float).view(-1, 1)
+
+        r = (r - r.mean()) / (r.std() + 1e-5)
+
         with torch.no_grad():
             target_v = r + args.gamma * self.cnet(s_)
         adv = (target_v - self.cnet(s)).detach()
 
-        for i in range(self.ppo_epoch):
-            action_probs = self.anet(s).gather(1, a)
-            ratio = action_probs / old_action_probs
+        for _ in range(self.ppo_epoch):
+            for index in BatchSampler(
+                    SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
+                action_probs = self.anet(s[index]).gather(1, a[index])
+                ratio = action_probs / old_action_probs[index]
 
-            surr1 = ratio * adv
-            surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv
-            action_loss = -torch.min(surr1, surr2).mean()
-            self.optimizer_a.zero_grad()
-            action_loss.backward()
-            nn.utils.clip_grad_norm_(self.anet.parameters(), self.max_grad_norm)
-            self.optimizer_a.step()
+                surr1 = ratio * adv[index]
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param,
+                                    1.0 + self.clip_param) * adv[index]
+                action_loss = -torch.min(surr1, surr2).mean()
+                self.optimizer_a.zero_grad()
+                action_loss.backward()
+                nn.utils.clip_grad_norm_(self.anet.parameters(), self.max_grad_norm)
+                self.optimizer_a.step()
 
-            value_loss = F.smooth_l1_loss(self.cnet(s), target_v)
-            self.optimizer_c.zero_grad()
-            value_loss.backward()
-            nn.utils.clip_grad_norm_(self.cnet.parameters(), self.max_grad_norm)
-            self.optimizer_c.step()
+                value_loss = F.smooth_l1_loss(self.cnet(s[index]), target_v[index])
+                self.optimizer_c.zero_grad()
+                value_loss.backward()
+                nn.utils.clip_grad_norm_(self.cnet.parameters(), self.max_grad_norm)
+                self.optimizer_c.step()
 
         del self.buffer[:]
 
@@ -135,10 +151,9 @@ for i_ep in range(1000):
         state_, reward, done, _ = env.step(action)
         if args.render:
             env.render()
-        agent.buffer.append(Transition(state, action_index, action_prob, (reward + 8) / 8, state_))
-        score += reward
-        if (t + 1) % 32 == 0:
+        if agent.store(Transition(state, action_index, action_prob, (reward + 8) / 8, state_)):
             agent.update()
+        score += reward
         state = state_
 
     running_reward = running_reward * 0.9 + score * 0.1
