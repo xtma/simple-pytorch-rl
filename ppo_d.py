@@ -32,9 +32,6 @@ torch.manual_seed(args.seed)
 TrainingRecord = namedtuple('TrainingRecord', ['ep', 'reward'])
 Transition = namedtuple('Transition', ['s', 'a', 'a_p', 'r', 's_'])
 
-env = gym.make('Pendulum-v0')
-env.seed(args.seed)
-
 
 class ActorNet(nn.Module):
 
@@ -137,41 +134,49 @@ class Agent():
         del self.buffer[:]
 
 
-agent = Agent()
+def main():
+    env = gym.make('Pendulum-v0')
+    env.seed(args.seed)
 
-training_records = []
-running_reward = -1000
-state = env.reset()
-for i_ep in range(1000):
-    score = 0
+    agent = Agent()
+
+    training_records = []
+    running_reward = -1000
     state = env.reset()
+    for i_ep in range(1000):
+        score = 0
+        state = env.reset()
 
-    for t in range(200):
-        action, action_index, action_prob = agent.select_action(state)
-        state_, reward, done, _ = env.step(action)
-        if args.render:
-            env.render()
-        if agent.store(Transition(state, action_index, action_prob, (reward + 8) / 8, state_)):
-            agent.update()
-        score += reward
-        state = state_
+        for t in range(200):
+            action, action_index, action_prob = agent.select_action(state)
+            state_, reward, done, _ = env.step(action)
+            if args.render:
+                env.render()
+            if agent.store(Transition(state, action_index, action_prob, (reward + 8) / 8, state_)):
+                agent.update()
+            score += reward
+            state = state_
 
-    running_reward = running_reward * 0.9 + score * 0.1
-    training_records.append(TrainingRecord(i_ep, running_reward))
+        running_reward = running_reward * 0.9 + score * 0.1
+        training_records.append(TrainingRecord(i_ep, running_reward))
 
-    if i_ep % args.log_interval == 0:
-        print('Ep {}\tMoving average score: {:.2f}\t'.format(i_ep, running_reward))
-    if running_reward > -200:
-        print("Solved! Moving average score is now {}!".format(running_reward))
-        env.close()
-        agent.save_param()
-        with open('log/ppo_d_training_records.pkl', 'wb') as f:
-            pickle.dump(training_records, f)
-        break
+        if i_ep % args.log_interval == 0:
+            print('Ep {}\tMoving average score: {:.2f}\t'.format(i_ep, running_reward))
+        if running_reward > -200:
+            print("Solved! Moving average score is now {}!".format(running_reward))
+            env.close()
+            agent.save_param()
+            with open('log/ppo_d_training_records.pkl', 'wb') as f:
+                pickle.dump(training_records, f)
+            break
 
-plt.plot([r.ep for r in training_records], [r.reward for r in training_records])
-plt.title('PPO (discrete)')
-plt.xlabel('Episode')
-plt.ylabel('Moving averaged episode reward')
-plt.savefig("img/ppo_d.png")
-plt.show()
+    plt.plot([r.ep for r in training_records], [r.reward for r in training_records])
+    plt.title('PPO (discrete)')
+    plt.xlabel('Episode')
+    plt.ylabel('Moving averaged episode reward')
+    plt.savefig("img/ppo_d.png")
+    plt.show()
+
+
+if __name__ == '__main__':
+    main()

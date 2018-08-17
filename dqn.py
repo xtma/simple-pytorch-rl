@@ -32,9 +32,6 @@ np.random.seed(args.seed)
 TrainingRecord = namedtuple('TrainingRecord', ['ep', 'reward'])
 Transition = namedtuple('Transition', ['s', 'a', 'r', 's_'])
 
-env = gym.make('Pendulum-v0')
-env.seed(args.seed)
-
 
 class Net(nn.Module):
 
@@ -133,45 +130,53 @@ class Agent():
         return q_eval.mean().item()
 
 
-agent = Agent()
+def main():
+    env = gym.make('Pendulum-v0')
+    env.seed(args.seed)
 
-training_records = []
-running_reward, running_q = -1000, 0
-for i_ep in range(100):
-    score = 0
-    state = env.reset()
+    agent = Agent()
 
-    for t in range(200):
-        action, action_index = agent.select_action(state)
-        state_, reward, done, _ = env.step(action)
-        score += reward
-        if args.render:
-            env.render()
-        agent.store_transition(Transition(state, action_index, (reward + 8) / 8, state_))
-        state = state_
-        if agent.memory.isfull:
-            q = agent.update()
-            running_q = 0.99 * running_q + 0.01 * q
+    training_records = []
+    running_reward, running_q = -1000, 0
+    for i_ep in range(100):
+        score = 0
+        state = env.reset()
 
-    running_reward = running_reward * 0.9 + score * 0.1
-    training_records.append(TrainingRecord(i_ep, running_reward))
+        for t in range(200):
+            action, action_index = agent.select_action(state)
+            state_, reward, done, _ = env.step(action)
+            score += reward
+            if args.render:
+                env.render()
+            agent.store_transition(Transition(state, action_index, (reward + 8) / 8, state_))
+            state = state_
+            if agent.memory.isfull:
+                q = agent.update()
+                running_q = 0.99 * running_q + 0.01 * q
 
-    if i_ep % args.log_interval == 0:
-        print('Ep {}\tAverage score: {:.2f}\tAverage Q: {:.2f}'.format(
-            i_ep, running_reward, running_q))
-    if running_reward > -200:
-        print("Solved! Running reward is now {}!".format(running_reward))
-        env.close()
-        agent.save_param()
-        with open('log/dqn_training_records.pkl', 'wb') as f:
-            pickle.dump(training_records, f)
-        break
+        running_reward = running_reward * 0.9 + score * 0.1
+        training_records.append(TrainingRecord(i_ep, running_reward))
 
-env.close()
+        if i_ep % args.log_interval == 0:
+            print('Ep {}\tAverage score: {:.2f}\tAverage Q: {:.2f}'.format(
+                i_ep, running_reward, running_q))
+        if running_reward > -200:
+            print("Solved! Running reward is now {}!".format(running_reward))
+            env.close()
+            agent.save_param()
+            with open('log/dqn_training_records.pkl', 'wb') as f:
+                pickle.dump(training_records, f)
+            break
 
-plt.plot([r.ep for r in training_records], [r.reward for r in training_records])
-plt.title('DQN')
-plt.xlabel('Episode')
-plt.ylabel('Moving averaged episode reward')
-plt.savefig("img/dqn.png")
-plt.show()
+    env.close()
+
+    plt.plot([r.ep for r in training_records], [r.reward for r in training_records])
+    plt.title('DQN')
+    plt.xlabel('Episode')
+    plt.ylabel('Moving averaged episode reward')
+    plt.savefig("img/dqn.png")
+    plt.show()
+
+
+if __name__ == '__main__':
+    main()
