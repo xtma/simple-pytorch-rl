@@ -97,7 +97,7 @@ class Agent():
         mu = self.eval_anet(state)
         dist = Normal(mu, torch.tensor(self.var, dtype=torch.float))
         action = dist.sample()
-        action.clamp(-2.0, 2.0)
+        action = action.clamp(-2.0, 2.0)
         return (action.item(),)
 
     def save_param(self):
